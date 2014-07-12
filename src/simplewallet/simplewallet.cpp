@@ -177,6 +177,7 @@ simple_wallet::simple_wallet()
   m_cmd_binder.set_handler("save_bc", boost::bind(&simple_wallet::save_bc, this, _1), "Save current blockchain data");
   m_cmd_binder.set_handler("refresh", boost::bind(&simple_wallet::refresh, this, _1), "Resynchronize transactions and balance");
   m_cmd_binder.set_handler("balance", boost::bind(&simple_wallet::show_balance, this, _1), "Show current wallet balance");
+  m_cmd_binder.set_handler("unconfirmed", boost::bind(&simple_wallet::show_unconfirmed, this, _1), "Show unconfirmed amount");
   m_cmd_binder.set_handler("incoming_transfers", boost::bind(&simple_wallet::show_incoming_transfers, this, _1), "incoming_transfers [available|unavailable] - Show incoming transfers - all of them or filter them by availability");
   m_cmd_binder.set_handler("payments", boost::bind(&simple_wallet::show_payments, this, _1), "payments <payment_id_1> [<payment_id_2> ... <payment_id_N>] - Show payments <payment_id_1>, ... <payment_id_N>");
   m_cmd_binder.set_handler("bc_height", boost::bind(&simple_wallet::show_blockchain_height, this, _1), "Show blockchain height");
@@ -653,6 +654,12 @@ bool simple_wallet::refresh(const std::vector<std::string>& args)
 bool simple_wallet::show_balance(const std::vector<std::string>& args/* = std::vector<std::string>()*/)
 {
   success_msg_writer() << "balance: " << print_money(m_wallet->balance()) << ", unlocked balance: " << print_money(m_wallet->unlocked_balance());
+  return true;
+}
+//----------------------------------------------------------------------------------------------------
+bool simple_wallet::show_unconfirmed(const std::vector<std::string>& args) const 
+{
+  success_msg_writer() << "unconfirmed: " << print_money(m_wallet->balance_unconfirmed());
   return true;
 }
 //----------------------------------------------------------------------------------------------------
