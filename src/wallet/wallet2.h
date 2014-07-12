@@ -120,7 +120,9 @@ namespace tools
     void refresh(size_t & blocks_fetched, bool& received_money);
     bool refresh(size_t & blocks_fetched, bool& received_money, bool& ok);
 
-    uint64_t balance();
+    uint64_t balance_unconfirmed() const;
+    uint64_t balance_confirmed() const;
+    uint64_t balance() const;
     uint64_t unlocked_balance();
     template<typename T>
     void transfer(const std::vector<cryptonote::tx_destination_entry>& dsts, size_t fake_outputs_count, uint64_t unlock_time, uint64_t fee, const std::vector<uint8_t>& extra, T destination_split_strategy, const tx_dust_policy& dust_policy);

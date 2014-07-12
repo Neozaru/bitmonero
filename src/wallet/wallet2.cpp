@@ -552,18 +552,31 @@ uint64_t wallet2::unlocked_balance()
   return amount;
 }
 //----------------------------------------------------------------------------------------------------
-uint64_t wallet2::balance()
+uint64_t wallet2::balance_unconfirmed() const 
 {
   uint64_t amount = 0;
-  BOOST_FOREACH(auto& td, m_transfers)
-    if(!td.m_spent)
-      amount += td.amount();
-
-
-  BOOST_FOREACH(auto& utx, m_unconfirmed_txs)
-    amount+= utx.second.m_change;
+  BOOST_FOREACH(auto& utx, m_unconfirmed_txs) {
+    amount += utx.second.m_change;
+  }
 
   return amount;
+}
+//----------------------------------------------------------------------------------------------------
+uint64_t wallet2::balance_confirmed() const 
+{
+  uint64_t amount = 0;
+  BOOST_FOREACH(auto& td, m_transfers) {
+    if(!td.m_spent) {
+      amount += td.amount();
+    }
+  }
+
+  return amount;
+}
+//----------------------------------------------------------------------------------------------------
+uint64_t wallet2::balance() const
+{
+  return balance_confirmed() + balance_unconfirmed();
 }
 //----------------------------------------------------------------------------------------------------
 void wallet2::get_transfers(wallet2::transfer_container& incoming_transfers) const
