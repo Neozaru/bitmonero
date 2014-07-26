@@ -1,7 +1,32 @@
-// Copyright (c) 2012-2013 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
-
+// Copyright (c) 2014, The Monero Project
+// 
+// All rights reserved.
+// 
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+// 
+// 1. Redistributions of source code must retain the above copyright notice, this list of
+//    conditions and the following disclaimer.
+// 
+// 2. Redistributions in binary form must reproduce the above copyright notice, this list
+//    of conditions and the following disclaimer in the documentation and/or other
+//    materials provided with the distribution.
+// 
+// 3. Neither the name of the copyright holder nor the names of its contributors may be
+//    used to endorse or promote products derived from this software without specific
+//    prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+// THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// 
+// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #include "include_base_utils.h"
 using namespace epee;
@@ -10,6 +35,7 @@ using namespace epee;
 #include "common/command_line.h"
 #include "cryptonote_core/cryptonote_format_utils.h"
 #include "cryptonote_core/account.h"
+#include "wallet_rpc_server_commands_defs.h"
 #include "misc_language.h"
 #include "string_tools.h"
 #include "crypto/hash.h"
@@ -85,18 +111,12 @@ namespace tools
     }
     return true;
   }
+
   //------------------------------------------------------------------------------------------------------------------------------
-  bool wallet_rpc_server::on_transfer(const wallet_rpc::COMMAND_RPC_TRANSFER::request& req, wallet_rpc::COMMAND_RPC_TRANSFER::response& res, epee::json_rpc::error& er, connection_context& cntx)
+  bool wallet_rpc_server::validate_transfer(const std::list<wallet_rpc::transfer_destination> destinations, const std::string payment_id, std::vector<cryptonote::tx_destination_entry>& dsts, std::vector<uint8_t>& extra, epee::json_rpc::error& er)
   {
 
-    if ( req.fee < DEFAULT_FEE ) {
-      er.code = WALLET_RPC_ERROR_CODE_WRONG_FEE;
-      er.message = "Fee is not valid. Minimum fee : " + std::to_string(DEFAULT_FEE) + " (Moneroshi)";
-      return false;
-    }
-
-    std::vector<cryptonote::tx_destination_entry> dsts;
-    for (auto it = req.destinations.begin(); it != req.destinations.end(); it++)
+    for (auto it = destinations.begin(); it != destinations.end(); it++)
     {
       cryptonote::tx_destination_entry de;
       if(!get_account_address_from_str(de.addr, it->address))
@@ -109,11 +129,11 @@ namespace tools
       dsts.push_back(de);
     }
 
-    std::vector<uint8_t> extra;
-    if (!req.payment_id.empty()) {
+    if (!payment_id.empty())
+    {
 
       /* Just to clarify */
-      const std::string& payment_id_str = req.payment_id;
+      const std::string& payment_id_str = payment_id;
 
       crypto::hash payment_id;
       /* Parse payment ID */
@@ -134,12 +154,85 @@ namespace tools
       }
 
     }
+    return true;
+  }
+
+  //------------------------------------------------------------------------------------------------------------------------------
+  bool wallet_rpc_server::on_transfer(const wallet_rpc::COMMAND_RPC_TRANSFER::request& req, wallet_rpc::COMMAND_RPC_TRANSFER::response& res, epee::json_rpc::error& er, connection_context& cntx)
+  {
+
+    std::vector<cryptonote::tx_destination_entry> dsts;
+    std::vector<uint8_t> extra;
+
+    // validate the transfer requested and populate dsts & extra
+    if (!validate_transfer(req.destinations, req.payment_id, dsts, extra, er))
+    {
+      return false;
+    }
 
     try
     {
-      cryptonote::transaction tx;
-      m_wallet.transfer(dsts, req.mixin, req.unlock_time, req.fee, extra, tx);
-      res.tx_hash = boost::lexical_cast<std::string>(cryptonote::get_transaction_hash(tx));
+      std::vector<wallet2::pending_tx> ptx_vector = m_wallet.create_transactions(dsts, req.mixin, req.unlock_time, req.fee, extra);
+
+      // reject proposed transactions if there are more than one.  see on_transfer_split below.
+      if (ptx_vector.size() != 1)
+      {
+        er.code = WALLET_RPC_ERROR_CODE_GENERIC_TRANSFER_ERROR;
+        er.message = "Transaction would be too large.  try /transfer_split.";
+        return false;
+      }
+
+      m_wallet.commit_tx(ptx_vector);
+
+      // populate response with tx hash
+      res.tx_hash = boost::lexical_cast<std::string>(cryptonote::get_transaction_hash(ptx_vector.back().tx));
+      return true;
+    }
+    catch (const tools::error::daemon_busy& e)
+    {
+      er.code = WALLET_RPC_ERROR_CODE_DAEMON_IS_BUSY;
+      er.message = e.what();
+      return false;
+    }
+    catch (const std::exception& e)
+    {
+      er.code = WALLET_RPC_ERROR_CODE_GENERIC_TRANSFER_ERROR;
+      er.message = e.what();
+      return false;
+    }
+    catch (...)
+    {
+      er.code = WALLET_RPC_ERROR_CODE_UNKNOWN_ERROR;
+      er.message = "WALLET_RPC_ERROR_CODE_UNKNOWN_ERROR";
+      return false;
+    }
+    return true;
+  }
+  //------------------------------------------------------------------------------------------------------------------------------
+  bool wallet_rpc_server::on_transfer_split(const wallet_rpc::COMMAND_RPC_TRANSFER_SPLIT::request& req, wallet_rpc::COMMAND_RPC_TRANSFER_SPLIT::response& res, epee::json_rpc::error& er, connection_context& cntx)
+  {
+
+    std::vector<cryptonote::tx_destination_entry> dsts;
+    std::vector<uint8_t> extra;
+
+    // validate the transfer requested and populate dsts & extra; RPC_TRANSFER::request and RPC_TRANSFER_SPLIT::request are identical types.
+    if (!validate_transfer(req.destinations, req.payment_id, dsts, extra, er))
+    {
+      return false;
+    }
+
+    try
+    {
+      std::vector<wallet2::pending_tx> ptx_vector = m_wallet.create_transactions(dsts, req.mixin, req.unlock_time, req.fee, extra);
+
+      m_wallet.commit_tx(ptx_vector);
+
+      // populate response with tx hashes
+      for (auto & ptx : ptx_vector)
+      {
+        res.tx_hash_list.push_back(boost::lexical_cast<std::string>(cryptonote::get_transaction_hash(ptx.tx)));
+      }
+
       return true;
     }
     catch (const tools::error::daemon_busy& e)
@@ -201,14 +294,60 @@ namespace tools
     res.payments.clear();
     std::list<wallet2::payment_details> payment_list;
     m_wallet.get_payments(payment_id, payment_list);
-    for (auto payment : payment_list)
+    for (auto & payment : payment_list)
     {
       wallet_rpc::payment_details rpc_payment;
+      rpc_payment.payment_id   = req.payment_id;
       rpc_payment.tx_hash      = epee::string_tools::pod_to_hex(payment.m_tx_hash);
       rpc_payment.amount       = payment.m_amount;
       rpc_payment.block_height = payment.m_block_height;
       rpc_payment.unlock_time  = payment.m_unlock_time;
       res.payments.push_back(rpc_payment);
+    }
+
+    return true;
+  }
+  //------------------------------------------------------------------------------------------------------------------------------
+  bool wallet_rpc_server::on_get_bulk_payments(const wallet_rpc::COMMAND_RPC_GET_BULK_PAYMENTS::request& req, wallet_rpc::COMMAND_RPC_GET_BULK_PAYMENTS::response& res, epee::json_rpc::error& er, connection_context& cntx)
+  {
+    res.payments.clear();
+
+    for (auto & payment_id_str : req.payment_ids)
+    {
+      crypto::hash payment_id;
+      cryptonote::blobdata payment_id_blob;
+
+      // TODO - should the whole thing fail because of one bad id?
+
+      if(!epee::string_tools::parse_hexstr_to_binbuff(payment_id_str, payment_id_blob))
+      {
+        er.code = WALLET_RPC_ERROR_CODE_WRONG_PAYMENT_ID;
+        er.message = "Payment ID has invalid format: " + payment_id_str;
+        return false;
+      }
+
+      if(sizeof(payment_id) != payment_id_blob.size())
+      {
+        er.code = WALLET_RPC_ERROR_CODE_WRONG_PAYMENT_ID;
+        er.message = "Payment ID has invalid size: " + payment_id_str;
+        return false;
+      }
+
+      payment_id = *reinterpret_cast<const crypto::hash*>(payment_id_blob.data());
+
+      std::list<wallet2::payment_details> payment_list;
+      m_wallet.get_payments(payment_id, payment_list, req.min_block_height);
+
+      for (auto & payment : payment_list)
+      {
+        wallet_rpc::payment_details rpc_payment;
+        rpc_payment.payment_id   = payment_id_str;
+        rpc_payment.tx_hash      = epee::string_tools::pod_to_hex(payment.m_tx_hash);
+        rpc_payment.amount       = payment.m_amount;
+        rpc_payment.block_height = payment.m_block_height;
+        rpc_payment.unlock_time  = payment.m_unlock_time;
+        res.payments.push_back(std::move(rpc_payment));
+      }
     }
 
     return true;
