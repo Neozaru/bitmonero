@@ -66,6 +66,8 @@ namespace tools
       crypto::key_image m_key_image; //TODO: key_image stored twice :(
 
       uint64_t amount() const { return m_tx.vout[m_internal_output_index].amount; }
+
+      uint64_t m_spent_block_height;
     };
 
     struct payment_details
@@ -134,6 +136,7 @@ namespace tools
     void get_transfers(wallet2::transfer_container& incoming_transfers) const;
     void get_payments(const crypto::hash& payment_id, std::list<wallet2::payment_details>& payments) const;
     uint64_t get_blockchain_current_height() const { return m_local_bc_height; }
+    size_t get_datamodel_version() const { return m_datamodel_version; }
     template <class t_archive>
     inline void serialize(t_archive &a, const unsigned int ver)
     {
@@ -189,6 +192,9 @@ namespace tools
     std::atomic<bool> m_run;
 
     i_wallet2_callback* m_callback;
+
+    /* Will perform a new refresh when m_datamodel_version < g_datamodel_version */
+    size_t m_datamodel_version;
   };
 }
 BOOST_CLASS_VERSION(tools::wallet2, 7)

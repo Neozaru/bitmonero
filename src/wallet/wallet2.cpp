@@ -128,6 +128,7 @@ void wallet2::process_new_transaction(const cryptonote::transaction& tx, uint64_
       tx_money_spent_in_ins += boost::get<cryptonote::txin_to_key>(in).amount;
       transfer_details& td = m_transfers[it->second];
       td.m_spent = true;
+      td.m_spent_block_height = height;
       if (0 != m_callback)
         m_callback->on_money_spent(height, td.m_tx, td.m_internal_output_index, tx);
     }
