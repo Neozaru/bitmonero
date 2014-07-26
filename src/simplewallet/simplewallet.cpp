@@ -1,6 +1,32 @@
-// Copyright (c) 2012-2013 The Cryptonote developers
-// Distributed under the MIT/X11 software license, see the accompanying
-// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+// Copyright (c) 2014, The Monero Project
+// 
+// All rights reserved.
+// 
+// Redistribution and use in source and binary forms, with or without modification, are
+// permitted provided that the following conditions are met:
+// 
+// 1. Redistributions of source code must retain the above copyright notice, this list of
+//    conditions and the following disclaimer.
+// 
+// 2. Redistributions in binary form must reproduce the above copyright notice, this list
+//    of conditions and the following disclaimer in the documentation and/or other
+//    materials provided with the distribution.
+// 
+// 3. Neither the name of the copyright holder nor the names of its contributors may be
+//    used to endorse or promote products derived from this software without specific
+//    prior written permission.
+// 
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL
+// THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
+// THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// 
+// Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
 #include <thread>
 #include <iostream>
@@ -499,9 +525,9 @@ bool simple_wallet::start_mining(const std::vector<std::string>& args)
   }
   else if (1 == args.size())
   {
-    uint16_t num;
+    uint16_t num = 1;
     ok = string_tools::get_xtype_from_string(num, args[0]);
-    ok &= (1 <= num && num <= max_mining_threads_count);
+    ok = ok && (1 <= num && num <= max_mining_threads_count);
     req.threads_count = num;
   }
   else
@@ -785,6 +811,7 @@ bool simple_wallet::show_blockchain_height(const std::vector<std::string>& args)
     fail_msg_writer() << "failed to get blockchain height: " << err;
   return true;
 }
+
 //----------------------------------------------------------------------------------------------------
 bool simple_wallet::transfer(const std::vector<std::string> &args_)
 {
@@ -851,9 +878,38 @@ bool simple_wallet::transfer(const std::vector<std::string> &args_)
 
   try
   {
-    cryptonote::transaction tx;
-    m_wallet->transfer(dsts, fake_outs_count, 0, DEFAULT_FEE, extra, tx);
-    success_msg_writer(true) << "Money successfully sent, transaction " << get_transaction_hash(tx);
+    // figure out what tx will be necessary
+    auto ptx_vector = m_wallet->create_transactions(dsts, fake_outs_count, 0 /* unlock_time */, DEFAULT_FEE, extra);
+
+    // if more than one tx necessary, prompt user to confirm
+    if (ptx_vector.size() > 1)
+    {
+        std::string prompt_str = "Your transaction needs to be split into ";
+        prompt_str += std::to_string(ptx_vector.size());
+        prompt_str += " transactions.  This will result in a fee of ";
+        prompt_str += print_money(ptx_vector.size() * DEFAULT_FEE);
+        prompt_str += ".  Is this okay?  (Y/Yes/N/No)";
+        std::string accepted = command_line::input_line(prompt_str);
+        if (accepted != "Y" && accepted != "y" && accepted != "Yes" && accepted != "yes")
+        {
+          fail_msg_writer() << "Transaction cancelled.";
+
+          // would like to return false, because no tx made, but everything else returns true
+          // and I don't know what returning false might adversely affect.  *sigh*
+          return true; 
+        }
+    }
+
+    // actually commit the transactions
+    while (!ptx_vector.empty())
+    {
+      auto & ptx = ptx_vector.back();
+      m_wallet->commit_tx(ptx);
+      success_msg_writer(true) << "Money successfully sent, transaction " << get_transaction_hash(ptx.tx);
+
+      // if no exception, remove element from vector
+      ptx_vector.pop_back();
+    }
   }
   catch (const tools::error::daemon_busy&)
   {
@@ -899,15 +955,13 @@ bool simple_wallet::transfer(const std::vector<std::string> &args_)
   {
     fail_msg_writer() << e.what();
   }
-  catch (const tools::error::tx_too_big& e)
-  {
-    cryptonote::transaction tx = e.tx();
-    fail_msg_writer() << "transaction " << get_transaction_hash(e.tx()) << " is too big. Transaction size: " <<
-      get_object_blobsize(e.tx()) << " bytes, transaction size limit: " << e.tx_size_limit() << " bytes";
-  }
   catch (const tools::error::zero_destination&)
   {
     fail_msg_writer() << "one of destinations is zero";
+  }
+  catch (const tools::error::tx_too_big& e)
+  {
+    fail_msg_writer() << "Failed to find a suitable way to split transactions";
   }
   catch (const tools::error::transfer_error& e)
   {
