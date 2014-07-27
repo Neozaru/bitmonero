@@ -184,7 +184,7 @@ simple_wallet::simple_wallet()
   m_cmd_binder.set_handler("transfer", boost::bind(&simple_wallet::transfer, this, _1), "transfer <mixin_count> <addr_1> <amount_1> [<addr_2> <amount_2> ... <addr_N> <amount_N>] [payment_id] - Transfer <amount_1>,... <amount_N> to <address_1>,... <address_N>, respectively. <mixin_count> is the number of transactions yours is indistinguishable from (from 0 to maximum available)");
   m_cmd_binder.set_handler("set_log", boost::bind(&simple_wallet::set_log, this, _1), "set_log <level> - Change current log detalization level, <level> is a number 0-4");
   m_cmd_binder.set_handler("address", boost::bind(&simple_wallet::print_address, this, _1), "Show current wallet public address");
-  m_cmd_binder.set_handler("dversion", boost::bind(&simple_wallet::print_dversion, this, _1), "Show current wallet2 datamodel version (for debugging)");
+  m_cmd_binder.set_handler("reset", boost::bind(&simple_wallet::reset, this, _1), "Erase computed data and refreshes from the start");
   m_cmd_binder.set_handler("save", boost::bind(&simple_wallet::save, this, _1), "Save wallet synchronized data");
   m_cmd_binder.set_handler("help", boost::bind(&simple_wallet::help, this, _1), "Show this help");
 }
@@ -692,7 +692,7 @@ bool simple_wallet::show_incoming_transfers(const std::vector<std::string>& args
     {
       if (!transfers_found)
       {
-        message_writer() << "        amount       \tspent\tglobal index\t                              tx id\t spent time";
+        message_writer() << "        amount       \tspent\tglobal index\t                              tx id\tblock height\t spent time";
         transfers_found = true;
       }
       message_writer(td.m_spent ? epee::log_space::console_color_magenta : epee::log_space::console_color_green, false) <<
@@ -700,6 +700,7 @@ bool simple_wallet::show_incoming_transfers(const std::vector<std::string>& args
         std::setw(3) << (td.m_spent ? 'T' : 'F') << '\t' <<
         std::setw(12) << td.m_global_output_index << '\t' <<
         std::setw(3) << get_transaction_hash(td.m_tx) << '\t' <<
+        std::setw(12) << std::to_string(td.m_block_height) << '\t' <<
         std::setw(12) << (td.m_spent ? std::to_string(td.m_spent_block_height) : "0");
     }
   }
@@ -959,10 +960,12 @@ bool simple_wallet::print_address(const std::vector<std::string> &args/* = std::
   success_msg_writer() << m_wallet->get_account().get_public_address_str();
   return true;
 }
-bool simple_wallet::print_dversion(const std::vector<std::string>& args)
+//----------------------------------------------------------------------------------------------------
+bool simple_wallet::reset(const std::vector<std::string>& args)
 {
-  success_msg_writer() << "Wallet dversion : " << std::to_string(m_wallet->get_datamodel_version());
-  return true;
+  m_wallet->clear();
+  success_msg_writer() << "Erased wallet data.";
+  return refresh(args);
 }
 //----------------------------------------------------------------------------------------------------
 bool simple_wallet::process_command(const std::vector<std::string> &args)

@@ -136,7 +136,8 @@ namespace tools
     void get_transfers(wallet2::transfer_container& incoming_transfers) const;
     void get_payments(const crypto::hash& payment_id, std::list<wallet2::payment_details>& payments) const;
     uint64_t get_blockchain_current_height() const { return m_local_bc_height; }
-    size_t get_datamodel_version() const { return m_datamodel_version; }
+    bool clear();
+
     template <class t_archive>
     inline void serialize(t_archive &a, const unsigned int ver)
     {
@@ -167,7 +168,6 @@ namespace tools
     void get_short_chain_history(std::list<crypto::hash>& ids);
     bool is_tx_spendtime_unlocked(uint64_t unlock_time) const;
     bool is_transfer_unlocked(const transfer_details& td) const;
-    bool clear();
     void pull_blocks(size_t& blocks_added);
     uint64_t select_transfers(uint64_t needed_money, bool add_dust, uint64_t dust, std::list<transfer_container::iterator>& selected_transfers);
     bool prepare_file_names(const std::string& file_path);
@@ -193,11 +193,11 @@ namespace tools
 
     i_wallet2_callback* m_callback;
 
-    /* Will perform a new refresh when m_datamodel_version < g_datamodel_version */
-    size_t m_datamodel_version;
   };
 }
-BOOST_CLASS_VERSION(tools::wallet2, 7)
+BOOST_CLASS_VERSION(tools::wallet2, 8)
+
+BOOST_CLASS_VERSION(tools::wallet2::transfer_details, 2)
 
 namespace boost
 {
@@ -212,6 +212,10 @@ namespace boost
       a & x.m_tx;
       a & x.m_spent;
       a & x.m_key_image;
+      if (ver < 2) {
+        return;
+      }
+      a & x.m_spent_block_height;
     }
 
     template <class Archive>
@@ -446,7 +450,8 @@ namespace tools
 
     LOG_PRINT_L2("transaction " << get_transaction_hash(tx) << " generated ok and sent to daemon, key_images: [" << key_images << "]");
 
-    BOOST_FOREACH(transfer_container::iterator it, selected_transfers)
+    /* Spent block height will not be displated until refresh */
+    BOOST_FOREACH(transfer_container::iterator it, selected_transfers) 
       it->m_spent = true;
 
     LOG_PRINT_L0("Transaction successfully sent. <" << get_transaction_hash(tx) << ">" << ENDL

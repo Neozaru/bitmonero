@@ -103,6 +103,7 @@ void wallet2::process_new_transaction(const cryptonote::transaction& tx, uint64_
       td.m_global_output_index = res.o_indexes[o];
       td.m_tx = tx;
       td.m_spent = false;
+      td.m_spent_block_height = 0;
       cryptonote::keypair in_ephemeral;
       cryptonote::generate_key_image_helper(m_account.get_keys(), tx_pub_key, o, in_ephemeral, td.m_key_image);
       THROW_WALLET_EXCEPTION_IF(in_ephemeral.pub != boost::get<cryptonote::txout_to_key>(tx.vout[o].target).key,
