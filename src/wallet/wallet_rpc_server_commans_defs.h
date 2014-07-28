@@ -148,12 +148,16 @@ namespace wallet_rpc
     bool spent;
     uint64_t global_index;
     std::string tx_hash;
+    uint64_t block_height;
+    uint64_t spent_block_height;
 
     BEGIN_KV_SERIALIZE_MAP()
       KV_SERIALIZE(amount)
       KV_SERIALIZE(spent)
       KV_SERIALIZE(global_index)
       KV_SERIALIZE(tx_hash)
+      KV_SERIALIZE(block_height)
+      KV_SERIALIZE(spent_block_height)
     END_KV_SERIALIZE_MAP()
   };
 
