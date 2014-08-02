@@ -253,6 +253,8 @@ namespace tools
         rpc_transfers.spent        = td.m_spent;
         rpc_transfers.global_index = td.m_global_output_index;
         rpc_transfers.tx_hash      = boost::lexical_cast<std::string>(cryptonote::get_transaction_hash(td.m_tx));
+        rpc_transfers.block_height = td.m_block_height;
+        rpc_transfers.spent_block_height = td.m_spent ? td.m_spent_block_height : 0;
         res.transfers.push_back(rpc_transfers);
       }
     }

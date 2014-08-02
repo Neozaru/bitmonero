@@ -103,6 +103,7 @@ void wallet2::process_new_transaction(const cryptonote::transaction& tx, uint64_
       td.m_global_output_index = res.o_indexes[o];
       td.m_tx = tx;
       td.m_spent = false;
+      td.m_spent_block_height = 0;
       cryptonote::keypair in_ephemeral;
       cryptonote::generate_key_image_helper(m_account.get_keys(), tx_pub_key, o, in_ephemeral, td.m_key_image);
       THROW_WALLET_EXCEPTION_IF(in_ephemeral.pub != boost::get<cryptonote::txout_to_key>(tx.vout[o].target).key,
@@ -128,6 +129,7 @@ void wallet2::process_new_transaction(const cryptonote::transaction& tx, uint64_
       tx_money_spent_in_ins += boost::get<cryptonote::txin_to_key>(in).amount;
       transfer_details& td = m_transfers[it->second];
       td.m_spent = true;
+      td.m_spent_block_height = height;
       if (0 != m_callback)
         m_callback->on_money_spent(height, td.m_tx, td.m_internal_output_index, tx);
     }
@@ -553,18 +555,31 @@ uint64_t wallet2::unlocked_balance()
   return amount;
 }
 //----------------------------------------------------------------------------------------------------
-uint64_t wallet2::balance()
+uint64_t wallet2::balance_unconfirmed() const 
 {
   uint64_t amount = 0;
-  BOOST_FOREACH(auto& td, m_transfers)
-    if(!td.m_spent)
-      amount += td.amount();
-
-
-  BOOST_FOREACH(auto& utx, m_unconfirmed_txs)
-    amount+= utx.second.m_change;
+  BOOST_FOREACH(auto& utx, m_unconfirmed_txs) {
+    amount += utx.second.m_change;
+  }
 
   return amount;
+}
+//----------------------------------------------------------------------------------------------------
+uint64_t wallet2::balance_confirmed() const 
+{
+  uint64_t amount = 0;
+  BOOST_FOREACH(auto& td, m_transfers) {
+    if(!td.m_spent) {
+      amount += td.amount();
+    }
+  }
+
+  return amount;
+}
+//----------------------------------------------------------------------------------------------------
+uint64_t wallet2::balance() const
+{
+  return balance_confirmed() + balance_unconfirmed();
 }
 //----------------------------------------------------------------------------------------------------
 size_t wallet2::get_transfers_count() const 
