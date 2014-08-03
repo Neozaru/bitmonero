@@ -25,6 +25,7 @@ const Transfer transferFromRawTransferDetails(const tools::wallet2::transfer_det
     lTransfer.global_output_index = pTransferDetails.m_global_output_index;
     lTransfer.local_output_index = pTransferDetails.m_internal_output_index;
     lTransfer.spent = pTransferDetails.m_spent;
+    lTransfer.spent_block_height  = pTransferDetails.m_spent_block_height;
     lTransfer.amount_mini = pTransferDetails.amount();
     lTransfer.amount = Wallet::miniToMonero(lTransfer.amount_mini);
 
