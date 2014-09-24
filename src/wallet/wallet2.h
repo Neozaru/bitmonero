@@ -80,9 +80,9 @@ namespace tools
 
   class wallet2
   {
-    wallet2(const wallet2&) : m_run(true), m_callback(0) {};
+    wallet2(const wallet2&) : m_run(true), m_callback(0), m_testnet(false) {};
   public:
-    wallet2() : m_run(true), m_callback(0) {};
+    wallet2(bool testnet = false) : m_run(true), m_callback(0), m_testnet(testnet) {};
     struct transfer_details
     {
       uint64_t m_block_height;
@@ -151,10 +151,14 @@ namespace tools
     i_wallet2_callback* callback() const { return m_callback; }
     void callback(i_wallet2_callback* callback) { m_callback = callback; }
 
+    bool get_seed(std::string& electrum_words);
+    
     void refresh();
-    void refresh(size_t & blocks_fetched);
-    void refresh(size_t & blocks_fetched, bool& received_money);
+    void refresh(uint64_t start_height, size_t & blocks_fetched);
+    void refresh(uint64_t start_height, size_t & blocks_fetched, bool& received_money);
     bool refresh(size_t & blocks_fetched, bool& received_money, bool& ok);
+
+    bool testnet() { return m_testnet; }
 
     uint64_t balance();
     uint64_t unlocked_balance();
@@ -202,11 +206,13 @@ namespace tools
     bool is_tx_spendtime_unlocked(uint64_t unlock_time) const;
     bool is_transfer_unlocked(const transfer_details& td) const;
     bool clear();
-    void pull_blocks(size_t& blocks_added);
+    void pull_blocks(uint64_t start_height, size_t& blocks_added);
     uint64_t select_transfers(uint64_t needed_money, bool add_dust, uint64_t dust, std::list<transfer_container::iterator>& selected_transfers);
     bool prepare_file_names(const std::string& file_path);
     void process_unconfirmed(const cryptonote::transaction& tx);
     void add_unconfirmed_tx(const cryptonote::transaction& tx, uint64_t change_amount);
+    void generate_genesis(cryptonote::block& b);
+    void check_genesis(const crypto::hash& genesis_hash); //throws
 
     cryptonote::account_base m_account;
     std::string m_daemon_address;
@@ -226,6 +232,7 @@ namespace tools
     std::atomic<bool> m_run;
 
     i_wallet2_callback* m_callback;
+    bool m_testnet;
   };
 }
 BOOST_CLASS_VERSION(tools::wallet2, 7)
@@ -355,7 +362,7 @@ namespace tools
     {
       THROW_WALLET_EXCEPTION_IF(0 == dt.amount, error::zero_destination);
       needed_money += dt.amount;
-      THROW_WALLET_EXCEPTION_IF(needed_money < dt.amount, error::tx_sum_overflow, dsts, fee);
+      THROW_WALLET_EXCEPTION_IF(needed_money < dt.amount, error::tx_sum_overflow, dsts, fee, m_testnet);
     }
 
     // randomly select inputs for transaction
@@ -460,7 +467,7 @@ namespace tools
     }
 
     bool r = cryptonote::construct_tx(m_account.get_keys(), sources, splitted_dsts, extra, tx, unlock_time);
-    THROW_WALLET_EXCEPTION_IF(!r, error::tx_not_constructed, sources, splitted_dsts, unlock_time);
+    THROW_WALLET_EXCEPTION_IF(!r, error::tx_not_constructed, sources, splitted_dsts, unlock_time, m_testnet);
     THROW_WALLET_EXCEPTION_IF(m_upper_transaction_size_limit <= get_object_blobsize(tx), error::tx_too_big, tx, m_upper_transaction_size_limit);
 
     std::string key_images;

@@ -35,6 +35,7 @@
 #include "include_base_utils.h"
 using namespace epee;
 
+#include "cryptonote_config.h"
 #include "wallet2.h"
 #include "cryptonote_core/cryptonote_format_utils.h"
 #include "rpc/core_rpc_server_commands_defs.h"
@@ -45,7 +46,13 @@ using namespace epee;
 #include "crypto/crypto.h"
 #include "serialization/binary_utils.h"
 #include "cryptonote_protocol/blobdatatype.h"
+#include "crypto/electrum-words.h"
 
+extern "C"
+{
+#include "crypto/keccak.h"
+#include "crypto/crypto-ops.h"
+}
 using namespace cryptonote;
 
 namespace
@@ -78,6 +85,18 @@ void wallet2::init(const std::string& daemon_address, uint64_t upper_transaction
   m_daemon_address = daemon_address;
 }
 //----------------------------------------------------------------------------------------------------
+bool wallet2::get_seed(std::string& electrum_words)
+{
+  crypto::ElectrumWords::bytes_to_words(get_account().get_keys().m_spend_secret_key, electrum_words);
+
+  crypto::secret_key second;
+  keccak((uint8_t *)&get_account().get_keys().m_spend_secret_key, sizeof(crypto::secret_key), (uint8_t *)&second, sizeof(crypto::secret_key));
+
+  sc_reduce32((uint8_t *)&second);
+  
+  return memcmp(second.data,get_account().get_keys().m_view_secret_key.data, sizeof(crypto::secret_key)) == 0;
+}
+//----------------------------------------------------------------------------------------------------
 void wallet2::process_new_transaction(const cryptonote::transaction& tx, uint64_t height)
 {
   process_unconfirmed(tx);
@@ -91,55 +110,59 @@ void wallet2::process_new_transaction(const cryptonote::transaction& tx, uint64_
     LOG_PRINT_L0("Transaction extra has unsupported format: " << get_transaction_hash(tx));
   }
 
-  tx_extra_pub_key pub_key_field;
-  if(!find_tx_extra_field_by_type(tx_extra_fields, pub_key_field))
+  // Don't try to extract tx public key if tx has no ouputs
+  if (!tx.vout.empty()) 
   {
-    LOG_PRINT_L0("Public key wasn't found in the transaction extra. Skipping transaction " << get_transaction_hash(tx));
-    if(0 != m_callback)
-      m_callback->on_skip_transaction(height, tx);
-    return;
-  }
-
-  crypto::public_key tx_pub_key = pub_key_field.pub_key;
-  bool r = lookup_acc_outs(m_account.get_keys(), tx, tx_pub_key, outs, tx_money_got_in_outs);
-  THROW_WALLET_EXCEPTION_IF(!r, error::acc_outs_lookup_error, tx, tx_pub_key, m_account.get_keys());
-
-  if(!outs.empty() && tx_money_got_in_outs)
-  {
-    //good news - got money! take care about it
-    //usually we have only one transfer for user in transaction
-    cryptonote::COMMAND_RPC_GET_TX_GLOBAL_OUTPUTS_INDEXES::request req = AUTO_VAL_INIT(req);
-    cryptonote::COMMAND_RPC_GET_TX_GLOBAL_OUTPUTS_INDEXES::response res = AUTO_VAL_INIT(res);
-    req.txid = get_transaction_hash(tx);
-    bool r = net_utils::invoke_http_bin_remote_command2(m_daemon_address + "/get_o_indexes.bin", req, res, m_http_client, WALLET_RCP_CONNECTION_TIMEOUT);
-    THROW_WALLET_EXCEPTION_IF(!r, error::no_connection_to_daemon, "get_o_indexes.bin");
-    THROW_WALLET_EXCEPTION_IF(res.status == CORE_RPC_STATUS_BUSY, error::daemon_busy, "get_o_indexes.bin");
-    THROW_WALLET_EXCEPTION_IF(res.status != CORE_RPC_STATUS_OK, error::get_out_indices_error, res.status);
-    THROW_WALLET_EXCEPTION_IF(res.o_indexes.size() != tx.vout.size(), error::wallet_internal_error,
-      "transactions outputs size=" + std::to_string(tx.vout.size()) +
-      " not match with COMMAND_RPC_GET_TX_GLOBAL_OUTPUTS_INDEXES response size=" + std::to_string(res.o_indexes.size()));
-
-    BOOST_FOREACH(size_t o, outs)
+    tx_extra_pub_key pub_key_field;
+    if(!find_tx_extra_field_by_type(tx_extra_fields, pub_key_field))
     {
-      THROW_WALLET_EXCEPTION_IF(tx.vout.size() <= o, error::wallet_internal_error, "wrong out in transaction: internal index=" +
-        std::to_string(o) + ", total_outs=" + std::to_string(tx.vout.size()));
+      LOG_PRINT_L0("Public key wasn't found in the transaction extra. Skipping transaction " << get_transaction_hash(tx));
+      if(0 != m_callback)
+	m_callback->on_skip_transaction(height, tx);
+      return;
+    }
 
-      m_transfers.push_back(boost::value_initialized<transfer_details>());
-      transfer_details& td = m_transfers.back();
-      td.m_block_height = height;
-      td.m_internal_output_index = o;
-      td.m_global_output_index = res.o_indexes[o];
-      td.m_tx = tx;
-      td.m_spent = false;
-      cryptonote::keypair in_ephemeral;
-      cryptonote::generate_key_image_helper(m_account.get_keys(), tx_pub_key, o, in_ephemeral, td.m_key_image);
-      THROW_WALLET_EXCEPTION_IF(in_ephemeral.pub != boost::get<cryptonote::txout_to_key>(tx.vout[o].target).key,
-        error::wallet_internal_error, "key_image generated ephemeral public key not matched with output_key");
+    crypto::public_key tx_pub_key = pub_key_field.pub_key;
+    bool r = lookup_acc_outs(m_account.get_keys(), tx, tx_pub_key, outs, tx_money_got_in_outs);
+    THROW_WALLET_EXCEPTION_IF(!r, error::acc_outs_lookup_error, tx, tx_pub_key, m_account.get_keys());
 
-      m_key_images[td.m_key_image] = m_transfers.size()-1;
-      LOG_PRINT_L0("Received money: " << print_money(td.amount()) << ", with tx: " << get_transaction_hash(tx));
-      if (0 != m_callback)
-        m_callback->on_money_received(height, td.m_tx, td.m_internal_output_index);
+    if(!outs.empty() && tx_money_got_in_outs)
+    {
+      //good news - got money! take care about it
+      //usually we have only one transfer for user in transaction
+      cryptonote::COMMAND_RPC_GET_TX_GLOBAL_OUTPUTS_INDEXES::request req = AUTO_VAL_INIT(req);
+      cryptonote::COMMAND_RPC_GET_TX_GLOBAL_OUTPUTS_INDEXES::response res = AUTO_VAL_INIT(res);
+      req.txid = get_transaction_hash(tx);
+      bool r = net_utils::invoke_http_bin_remote_command2(m_daemon_address + "/get_o_indexes.bin", req, res, m_http_client, WALLET_RCP_CONNECTION_TIMEOUT);
+      THROW_WALLET_EXCEPTION_IF(!r, error::no_connection_to_daemon, "get_o_indexes.bin");
+      THROW_WALLET_EXCEPTION_IF(res.status == CORE_RPC_STATUS_BUSY, error::daemon_busy, "get_o_indexes.bin");
+      THROW_WALLET_EXCEPTION_IF(res.status != CORE_RPC_STATUS_OK, error::get_out_indices_error, res.status);
+      THROW_WALLET_EXCEPTION_IF(res.o_indexes.size() != tx.vout.size(), error::wallet_internal_error,
+				"transactions outputs size=" + std::to_string(tx.vout.size()) +
+				" not match with COMMAND_RPC_GET_TX_GLOBAL_OUTPUTS_INDEXES response size=" + std::to_string(res.o_indexes.size()));
+
+      BOOST_FOREACH(size_t o, outs)
+      {
+	THROW_WALLET_EXCEPTION_IF(tx.vout.size() <= o, error::wallet_internal_error, "wrong out in transaction: internal index=" +
+				  std::to_string(o) + ", total_outs=" + std::to_string(tx.vout.size()));
+
+	m_transfers.push_back(boost::value_initialized<transfer_details>());
+	transfer_details& td = m_transfers.back();
+	td.m_block_height = height;
+	td.m_internal_output_index = o;
+	td.m_global_output_index = res.o_indexes[o];
+	td.m_tx = tx;
+	td.m_spent = false;
+	cryptonote::keypair in_ephemeral;
+	cryptonote::generate_key_image_helper(m_account.get_keys(), tx_pub_key, o, in_ephemeral, td.m_key_image);
+	THROW_WALLET_EXCEPTION_IF(in_ephemeral.pub != boost::get<cryptonote::txout_to_key>(tx.vout[o].target).key,
+				  error::wallet_internal_error, "key_image generated ephemeral public key not matched with output_key");
+
+	m_key_images[td.m_key_image] = m_transfers.size()-1;
+	LOG_PRINT_L0("Received money: " << print_money(td.amount()) << ", with tx: " << get_transaction_hash(tx));
+	if (0 != m_callback)
+	  m_callback->on_money_received(height, td.m_tx, td.m_internal_output_index);
+      }
     }
   }
 
@@ -192,9 +215,7 @@ void wallet2::process_unconfirmed(const cryptonote::transaction& tx)
 void wallet2::process_new_blockchain_entry(const cryptonote::block& b, cryptonote::block_complete_entry& bche, crypto::hash& bl_id, uint64_t height)
 {
   //handle transactions from new block
-  THROW_WALLET_EXCEPTION_IF(height != m_blockchain.size(), error::wallet_internal_error,
-    "current_index=" + std::to_string(height) + ", m_blockchain.size()=" + std::to_string(m_blockchain.size()));
-
+    
   //optimization: seeking only for blocks that are not older then the wallet creation time plus 1 day. 1 day is for possible user incorrect time setup
   if(b.timestamp + 60*60*24 > m_account.get_createtime())
   {
@@ -250,19 +271,17 @@ void wallet2::get_short_chain_history(std::list<crypto::hash>& ids)
     ids.push_back(m_blockchain[0]);
 }
 //----------------------------------------------------------------------------------------------------
-void wallet2::pull_blocks(size_t& blocks_added)
+void wallet2::pull_blocks(uint64_t start_height, size_t& blocks_added)
 {
   blocks_added = 0;
   cryptonote::COMMAND_RPC_GET_BLOCKS_FAST::request req = AUTO_VAL_INIT(req);
   cryptonote::COMMAND_RPC_GET_BLOCKS_FAST::response res = AUTO_VAL_INIT(res);
   get_short_chain_history(req.block_ids);
+  req.start_height = start_height;
   bool r = net_utils::invoke_http_bin_remote_command2(m_daemon_address + "/getblocks.bin", req, res, m_http_client, WALLET_RCP_CONNECTION_TIMEOUT);
   THROW_WALLET_EXCEPTION_IF(!r, error::no_connection_to_daemon, "getblocks.bin");
   THROW_WALLET_EXCEPTION_IF(res.status == CORE_RPC_STATUS_BUSY, error::daemon_busy, "getblocks.bin");
   THROW_WALLET_EXCEPTION_IF(res.status != CORE_RPC_STATUS_OK, error::get_blocks_error, res.status);
-  THROW_WALLET_EXCEPTION_IF(m_blockchain.size() <= res.start_height, error::wallet_internal_error,
-    "wrong daemon response: m_start_height=" + std::to_string(res.start_height) +
-    " not less than local blockchain size=" + std::to_string(m_blockchain.size()));
 
   size_t current_index = res.start_height;
   BOOST_FOREACH(auto& bl_entry, res.blocks)
@@ -300,16 +319,16 @@ void wallet2::pull_blocks(size_t& blocks_added)
 void wallet2::refresh()
 {
   size_t blocks_fetched = 0;
-  refresh(blocks_fetched);
+  refresh(0, blocks_fetched);
 }
 //----------------------------------------------------------------------------------------------------
-void wallet2::refresh(size_t & blocks_fetched)
+void wallet2::refresh(uint64_t start_height, size_t & blocks_fetched)
 {
   bool received_money = false;
-  refresh(blocks_fetched, received_money);
+  refresh(start_height, blocks_fetched, received_money);
 }
 //----------------------------------------------------------------------------------------------------
-void wallet2::refresh(size_t & blocks_fetched, bool& received_money)
+void wallet2::refresh(uint64_t start_height, size_t & blocks_fetched, bool& received_money)
 {
   received_money = false;
   blocks_fetched = 0;
@@ -321,7 +340,7 @@ void wallet2::refresh(size_t & blocks_fetched, bool& received_money)
   {
     try
     {
-      pull_blocks(added_blocks);
+      pull_blocks(start_height, added_blocks);
       blocks_fetched += added_blocks;
       if(!added_blocks)
         break;
@@ -351,7 +370,7 @@ bool wallet2::refresh(size_t & blocks_fetched, bool& received_money, bool& ok)
 {
   try
   {
-    refresh(blocks_fetched, received_money);
+    refresh(0, blocks_fetched, received_money);
     ok = true;
   }
   catch (...)
@@ -402,9 +421,6 @@ bool wallet2::clear()
 {
   m_blockchain.clear();
   m_transfers.clear();
-  cryptonote::block b;
-  cryptonote::generate_genesis_block(b);
-  m_blockchain.push_back(get_block_hash(b));
   m_local_bc_height = 1;
   return true;
 }
@@ -480,8 +496,12 @@ crypto::secret_key wallet2::generate(const std::string& wallet_, const std::stri
   bool r = store_keys(m_keys_file, password);
   THROW_WALLET_EXCEPTION_IF(!r, error::file_save_error, m_keys_file);
 
-  r = file_io_utils::save_string_to_file(m_wallet_file + ".address.txt", m_account.get_public_address_str());
+  r = file_io_utils::save_string_to_file(m_wallet_file + ".address.txt", m_account.get_public_address_str(m_testnet));
   if(!r) LOG_PRINT_RED_L0("String with address text not saved");
+
+  cryptonote::block b;
+  generate_genesis(b);
+  m_blockchain.push_back(get_block_hash(b));
 
   store();
   return retval;
@@ -523,8 +543,12 @@ bool wallet2::check_connection()
 
   net_utils::http::url_content u;
   net_utils::parse_url(m_daemon_address, u);
+
   if(!u.port)
-    u.port = RPC_DEFAULT_PORT;
+  {
+    u.port = m_testnet ? config::testnet::RPC_DEFAULT_PORT : config::RPC_DEFAULT_PORT;
+  }
+
   return m_http_client.connect(u.host, std::to_string(u.port), WALLET_RCP_CONNECTION_TIMEOUT);
 }
 //----------------------------------------------------------------------------------------------------
@@ -538,7 +562,7 @@ void wallet2::load(const std::string& wallet_, const std::string& password)
   THROW_WALLET_EXCEPTION_IF(e || !exists, error::file_not_found, m_keys_file);
 
   load_keys(m_keys_file, password);
-  LOG_PRINT_L0("Loaded wallet keys file, with public address: " << m_account.get_public_address_str());
+  LOG_PRINT_L0("Loaded wallet keys file, with public address: " << m_account.get_public_address_str(m_testnet));
 
   //keys loaded ok!
   //try to load wallet file. but even if we failed, it is not big problem
@@ -555,13 +579,26 @@ void wallet2::load(const std::string& wallet_, const std::string& password)
     m_account_public_address.m_view_public_key  != m_account.get_keys().m_account_address.m_view_public_key,
     error::wallet_files_doesnt_correspond, m_keys_file, m_wallet_file);
 
-  if(m_blockchain.empty())
+  cryptonote::block genesis;
+  generate_genesis(genesis);
+  crypto::hash genesis_hash = get_block_hash(genesis);
+
+  if (m_blockchain.empty())
   {
-    cryptonote::block b;
-    cryptonote::generate_genesis_block(b);
-    m_blockchain.push_back(get_block_hash(b));
+    m_blockchain.push_back(genesis_hash);
   }
+  else
+  {
+    check_genesis(genesis_hash);
+  }
+
   m_local_bc_height = m_blockchain.size();
+}
+//----------------------------------------------------------------------------------------------------
+void wallet2::check_genesis(const crypto::hash& genesis_hash) {
+  std::string what("Genesis block missmatch. You probably use wallet without testnet flag with blockchain from test network or vice versa");
+
+  THROW_WALLET_EXCEPTION_IF(genesis_hash != m_blockchain[0], error::wallet_internal_error, what);
 }
 //----------------------------------------------------------------------------------------------------
 void wallet2::store()
@@ -898,6 +935,18 @@ std::vector<wallet2::pending_tx> wallet2::create_transactions(std::vector<crypto
 
       throw;
     }
+  }
+}
+
+//----------------------------------------------------------------------------------------------------
+void wallet2::generate_genesis(cryptonote::block& b) {
+  if (m_testnet)
+  {
+    cryptonote::generate_genesis_block(b, config::testnet::GENESIS_TX, config::testnet::GENESIS_NONCE);
+  }
+  else
+  {
+    cryptonote::generate_genesis_block(b, config::GENESIS_TX, config::GENESIS_NONCE);
   }
 }
 }

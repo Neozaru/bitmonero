@@ -28,6 +28,8 @@
 // 
 // Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 
+
+/* This isn't a header file, may want to refactor this... */
 #pragma once
 
 #include <boost/lexical_cast.hpp>
@@ -39,12 +41,21 @@
 #include "crypto/hash.h"
 #include "version.h"
 
-
+/*!
+ * \brief I don't really know right now
+ *  
+ * 
+ */
 class daemon_cmmands_handler
 {
   nodetool::node_server<cryptonote::t_cryptonote_protocol_handler<cryptonote::core> >& m_srv;
 public:
-  daemon_cmmands_handler(nodetool::node_server<cryptonote::t_cryptonote_protocol_handler<cryptonote::core> >& srv):m_srv(srv)
+  daemon_cmmands_handler(
+      nodetool::node_server<cryptonote::t_cryptonote_protocol_handler<cryptonote::core> >& srv
+    , bool testnet
+    )
+    : m_srv(srv)
+    , m_testnet {testnet}
   {
     m_cmd_binder.set_handler("help", boost::bind(&daemon_cmmands_handler::help, this, _1), "Show this help");
     m_cmd_binder.set_handler("print_pl", boost::bind(&daemon_cmmands_handler::print_pl, this, _1), "Print peer list");
@@ -78,12 +89,13 @@ public:
 
 private:
   epee::srv_console_handlers_binder<nodetool::node_server<cryptonote::t_cryptonote_protocol_handler<cryptonote::core> > > m_cmd_binder;
+  bool m_testnet;
 
   //--------------------------------------------------------------------------------
   std::string get_commands_str()
   {
     std::stringstream ss;
-    ss << CRYPTONOTE_NAME << " v" << PROJECT_VERSION_LONG << ENDL;
+    ss << CRYPTONOTE_NAME << " v" << MONERO_VERSION_FULL << ENDL;
     ss << "Commands: " << ENDL;
     std::string usage = m_cmd_binder.get_usage();
     boost::replace_all(usage, "\n", "\n  ");
@@ -362,7 +374,7 @@ private:
     }
 
     cryptonote::account_public_address adr;
-    if(!cryptonote::get_account_address_from_str(adr, args.front()))
+    if(!cryptonote::get_account_address_from_str(adr, m_testnet, args.front()))
     {
       std::cout << "target account address has wrong format" << std::endl;
       return true;

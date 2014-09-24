@@ -101,7 +101,7 @@ namespace tools
   {
     try
     {
-      res.address = m_wallet.get_account().get_public_address_str();
+      res.address = m_wallet.get_account().get_public_address_str(m_wallet.testnet());
     }
     catch (std::exception& e)
     {
@@ -119,7 +119,7 @@ namespace tools
     for (auto it = destinations.begin(); it != destinations.end(); it++)
     {
       cryptonote::tx_destination_entry de;
-      if(!get_account_address_from_str(de.addr, it->address))
+      if(!get_account_address_from_str(de.addr, m_wallet.testnet(), it->address))
       {
         er.code = WALLET_RPC_ERROR_CODE_WRONG_ADDRESS;
         er.message = std::string("WALLET_RPC_ERROR_CODE_WRONG_ADDRESS: ") + it->address;
@@ -404,4 +404,26 @@ namespace tools
     return true;
   }
   //------------------------------------------------------------------------------------------------------------------------------
+  bool wallet_rpc_server::on_query_key(const wallet_rpc::COMMAND_RPC_QUERY_KEY::request& req, wallet_rpc::COMMAND_RPC_QUERY_KEY::response& res, epee::json_rpc::error& er, connection_context& cntx)
+  {
+      if (req.key_type.compare("mnemonic") == 0)
+      {
+        if (!m_wallet.get_seed(res.key))
+        {
+            er.message = "The wallet is non-deterministic. Cannot display seed.";
+            return false;
+        }
+      }
+      else if(req.key_type.compare("view_key") == 0)
+      {
+          res.key = string_tools::pod_to_hex(m_wallet.get_account().get_keys().m_view_secret_key);
+      }
+      else
+      {
+          er.message = "key_type " + req.key_type + " not found";
+          return false;
+      }
+
+      return true;
+  }
 }

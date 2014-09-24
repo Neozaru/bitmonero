@@ -68,7 +68,23 @@ DISABLE_VS_WARNINGS(4244 4345)
     keccak((uint8_t *)&first, sizeof(crypto::secret_key), (uint8_t *)&second, sizeof(crypto::secret_key));
 
     generate_keys(m_keys.m_account_address.m_view_public_key, m_keys.m_view_secret_key, second, two_random ? false : true);
-    m_creation_timestamp = time(NULL);
+
+    struct tm timestamp;
+    timestamp.tm_year = 2014 - 1900;  // year 2014
+    timestamp.tm_mon = 6 - 1;  // month june
+    timestamp.tm_mday = 8;  // 8th of june
+    timestamp.tm_hour = 0;
+    timestamp.tm_min = 0;
+    timestamp.tm_sec = 0;
+
+    if (recover)
+    {
+      m_creation_timestamp = mktime(&timestamp);
+    }
+    else
+    {
+      m_creation_timestamp = time(NULL);
+    }
     return first;
   }
   //-----------------------------------------------------------------
@@ -77,10 +93,10 @@ DISABLE_VS_WARNINGS(4244 4345)
     return m_keys;
   }
   //-----------------------------------------------------------------
-  std::string account_base::get_public_address_str()
+  std::string account_base::get_public_address_str(bool testnet)
   {
     //TODO: change this code into base 58
-    return get_account_address_as_str(m_keys.m_account_address);
+    return get_account_address_as_str(testnet, m_keys.m_account_address);
   }
   //-----------------------------------------------------------------
 }

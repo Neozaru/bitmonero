@@ -70,7 +70,7 @@ namespace cryptonote
 
      miner& get_miner(){return m_miner;}
      static void init_options(boost::program_options::options_description& desc);
-     bool init(const boost::program_options::variables_map& vm);
+     bool init(const boost::program_options::variables_map& vm, bool testnet);
      bool set_genesis_block(const block& b);
      bool deinit();
      uint64_t get_current_blockchain_height();
@@ -100,7 +100,7 @@ namespace cryptonote
      bool have_block(const crypto::hash& id);
      bool get_short_chain_history(std::list<crypto::hash>& ids);
      bool find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, NOTIFY_RESPONSE_CHAIN_ENTRY::request& resp);
-     bool find_blockchain_supplement(const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count);
+     bool find_blockchain_supplement(const uint64_t req_start_block, const std::list<crypto::hash>& qblock_ids, std::list<std::pair<block, std::list<transaction> > >& blocks, uint64_t& total_height, uint64_t& start_height, size_t max_count);
      bool get_stat_info(core_stat_info& st_inf);
      //bool get_backward_blocks_sizes(uint64_t from_height, std::vector<size_t>& sizes, size_t count);
      bool get_tx_outputs_gindexs(const crypto::hash& tx_id, std::vector<uint64_t>& indexs);
@@ -136,7 +136,7 @@ namespace cryptonote
      bool check_tx_ring_signature(const txin_to_key& tx, const crypto::hash& tx_prefix_hash, const std::vector<crypto::signature>& sig);
      bool is_tx_spendtime_unlocked(uint64_t unlock_time);
      bool update_miner_block_template();
-     bool handle_command_line(const boost::program_options::variables_map& vm);
+     bool handle_command_line(const boost::program_options::variables_map& vm, bool testnet);
      bool on_update_blocktemplate_interval();
      bool check_tx_inputs_keyimages_diff(const transaction& tx);
 
